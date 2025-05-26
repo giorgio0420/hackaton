@@ -88,7 +88,7 @@ class GNN_node(torch.nn.Module):
 
         #self.node_encoder = torch.nn.Embedding(1, emb_dim) # uniform input node embedding
 
-        input_dim = 1  # o il numero di feature per nodo che hai (es: 2, 3, ecc.)
+        input_dim = 2  # o il numero di feature per nodo che hai (es: 2, 3, ecc.)
         self.node_encoder = torch.nn.Linear(input_dim, emb_dim)
 
         ###List of GNNs
@@ -160,7 +160,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
 
-        self.node_encoder = torch.nn.Embedding(1, emb_dim) # uniform input node embedding
+        input_dim = 2  # o il numero di feature per nodo che hai (es: 2, 3, ecc.)
+        self.node_encoder = torch.nn.Linear(input_dim, emb_dim)
 
         ### set the initial virtual node embedding to 0.
         self.virtualnode_embedding = torch.nn.Embedding(1, emb_dim)
