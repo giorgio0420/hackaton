@@ -3,7 +3,7 @@ from torch_geometric.utils import degree
 
 def add_node_degree_feature(data):
     row, col = data.edge_index
-    deg = degree(row, num_nodes=data.num_nodes).unsqueeze(1)  # (num_nodes, 1)
+    deg = degree(row, num_nodes=data.num_nodes).unsqueeze(1)
 
     mean = deg.mean()
     std = deg.std()
@@ -20,3 +20,4 @@ def add_node_degree_feature(data):
         data.x = deg.float()
 
     return data
+
