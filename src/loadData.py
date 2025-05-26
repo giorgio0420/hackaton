@@ -63,14 +63,17 @@ class GraphDataset(Dataset):
             graphs_dicts = json.load(f)  # Load full JSON array without keeping references
             return len(graphs_dicts),graphs_dicts  # Return number of graphs
 
+
 def dictToGraphObject(graph_dict):
     edge_index = torch.tensor(graph_dict["edge_index"], dtype=torch.long)
     edge_attr = torch.tensor(graph_dict["edge_attr"], dtype=torch.float) if graph_dict["edge_attr"] else None
     num_nodes = graph_dict["num_nodes"]
     y = torch.tensor(graph_dict["y"][0], dtype=torch.long) if graph_dict["y"] is not None else None
-    return Data(edge_index=edge_index, edge_attr=edge_attr, num_nodes=num_nodes, y=y)
 
+    # Se vuoi inizializzare x a zeri (opzionale)
+    x = torch.zeros(num_nodes, 1, dtype=torch.float)  # 1 feature dummy per ogni nodo
 
+    return Data(edge_index=edge_index, edge_attr=edge_attr, num_nodes=num_nodes, y=y, x=x)
 
 
 
