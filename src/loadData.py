@@ -70,10 +70,9 @@ def dictToGraphObject(graph_dict):
     num_nodes = graph_dict["num_nodes"]
     y = torch.tensor(graph_dict["y"][0], dtype=torch.long) if graph_dict["y"] is not None else None
 
-    # Se vuoi inizializzare x a zeri (opzionale)
-    x = torch.zeros(num_nodes, 1, dtype=torch.float)  # 1 feature dummy per ogni nodo
+    # Non creare più x qui!
+    return Data(edge_index=edge_index, edge_attr=edge_attr, num_nodes=num_nodes, y=y)
 
-    return Data(edge_index=edge_index, edge_attr=edge_attr, num_nodes=num_nodes, y=y, x=x)
 
 
 
