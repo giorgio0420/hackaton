@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.utils import degree, clustering
+from torch_geometric.utils import degree
 
 def add_node_degree_feature(data):
     row, col = data.edge_index
