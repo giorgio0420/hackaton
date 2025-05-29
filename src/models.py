@@ -28,29 +28,36 @@ class GNN_node(torch.nn.Module):
 
     def forward(self, batched_data):
         x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
-
-        h_list = [self.node_encoder(x.to(next(self.parameters()).device))]
-
+    
+        device = next(self.parameters()).device
+        x = x.to(device)
+        edge_index = edge_index.to(device)
+        edge_attr = edge_attr.to(device)
+        batch = batch.to(device)
+    
+        h_list = [self.node_encoder(x)]
+    
         for layer in range(self.num_layer):
             h = self.convs[layer](h_list[layer], edge_index, edge_attr)
             h = self.batch_norms[layer](h)
-
+    
             if layer == self.num_layer - 1:
                 h = F.dropout(h, self.drop_ratio, training=self.training)
             else:
                 h = F.dropout(F.relu(h), self.drop_ratio, training=self.training)
-
+    
             if self.residual:
                 h += h_list[layer]
-
+    
             h_list.append(h)
-
+    
         if self.JK == "last":
             node_representation = h_list[-1]
         elif self.JK == "sum":
             node_representation = sum(h_list)
-
+    
         return node_representation
+
 
 class GNN(torch.nn.Module):
     def __init__(self, num_class, num_layer=5, emb_dim=300, input_dim=2, residual=False, drop_ratio=0.5, JK="last", graph_pooling="mean"):
