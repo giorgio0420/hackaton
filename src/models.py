@@ -23,7 +23,8 @@ class GNN_node(torch.nn.Module):
                 torch.nn.ReLU(),
                 torch.nn.Linear(2*emb_dim, emb_dim)
             )
-            self.convs.append(GINEConv(nn=mlp))
+            
+            self.convs.append(GINEConv(nn=mlp, edge_dim=7))
             self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
 
     def forward(self, batched_data):
