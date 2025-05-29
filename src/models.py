@@ -23,40 +23,39 @@ class GNN_node(torch.nn.Module):
                 torch.nn.ReLU(),
                 torch.nn.Linear(2*emb_dim, emb_dim)
             )
-            
-            self.convs.append(GINEConv(nn=mlp, edge_dim=7))
+            self.convs.append(GINEConv(nn=mlp, edge_dim=7))  # Usa edge_dim=7 per le edge features
             self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
 
     def forward(self, batched_data):
         x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
-    
+
         device = next(self.parameters()).device
         x = x.to(device)
         edge_index = edge_index.to(device)
         edge_attr = edge_attr.to(device)
         batch = batch.to(device)
-    
+
         h_list = [self.node_encoder(x)]
-    
+
         for layer in range(self.num_layer):
             h = self.convs[layer](h_list[layer], edge_index, edge_attr)
             h = self.batch_norms[layer](h)
-    
+
             if layer == self.num_layer - 1:
                 h = F.dropout(h, self.drop_ratio, training=self.training)
             else:
                 h = F.dropout(F.relu(h), self.drop_ratio, training=self.training)
-    
+
             if self.residual:
                 h += h_list[layer]
-    
+
             h_list.append(h)
-    
+
         if self.JK == "last":
             node_representation = h_list[-1]
         elif self.JK == "sum":
             node_representation = sum(h_list)
-    
+
         return node_representation
 
 
@@ -96,6 +95,10 @@ class GNN(torch.nn.Module):
             self.graph_pred_linear = torch.nn.Linear(self.emb_dim, self.num_class)
 
     def forward(self, batched_data):
+        device = next(self.parameters()).device
+        batched_data.batch = batched_data.batch.to(device)  # Fix del device per batch
+
         h_node = self.gnn_node(batched_data)
         h_graph = self.pool(h_node, batched_data.batch)
         return self.graph_pred_linear(h_graph)
+
