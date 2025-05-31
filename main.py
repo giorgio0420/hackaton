@@ -1,119 +1,145 @@
 import argparse
-import torch
-from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, global_mean_pool
-from loadData import GraphDataset
 import os
+import torch
+import numpy as np
+import random
+from source.loadData import GraphDataset
+from source.models import GNN
+from source.transform import add_node_degree_feature, add_clustering_coefficient, normalize_edge_attr
+from torch.utils.data import DataLoader, random_split
+from sklearn.metrics import accuracy_score
+import logging
 import pandas as pd
 
+# Seed
+def set_seed(seed=42):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
-def add_zeros(data):
-    data.x = torch.zeros(data.num_nodes, dtype=torch.long)  
-    return data
+set_seed(42)
 
+def get_folder_name(path):
+    return os.path.basename(os.path.dirname(path))
 
-class SimpleGCN(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
-        super(SimpleGCN, self).__init__()
-        self.embedding = torch.nn.Embedding(1, input_dim) 
-        self.conv1 = GCNConv(input_dim, hidden_dim)
-        self.conv2 = GCNConv(hidden_dim, hidden_dim)
-        self.global_pool = global_mean_pool  
-        self.fc = torch.nn.Linear(hidden_dim, output_dim)
+class NoisyCrossEntropyLoss(torch.nn.Module):
+    def __init__(self, p_noisy):
+        super().__init__()
+        self.p = p_noisy
+        self.ce = torch.nn.CrossEntropyLoss(reduction='none')
 
-    def forward(self, data):
-        x, edge_index, batch = data.x, data.edge_index, data.batch
-        x = self.embedding(x)  
-        x = self.conv1(x, edge_index)
-        x = torch.relu(x)
-        x = self.conv2(x, edge_index)
-        x = self.global_pool(x, batch)  
-        out = self.fc(x)  
-        return out
-
-
-def train(data_loader):
-    model.train()
-    total_loss = 0
-    for data in data_loader:
-        data = data.to(device)
-        optimizer.zero_grad()
-        output = model(data)
-        loss = criterion(output, data.y)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    return total_loss / len(data_loader)
+    def forward(self, logits, targets):
+        targets = targets.to(logits.device)  # <--- Sicurezza extra
+        losses = self.ce(logits, targets)
+        weights = (1 - self.p) + self.p * (1 - torch.nn.functional.one_hot(targets, num_classes=logits.size(1)).float().sum(dim=1))
+        weights = weights.to(logits.device)
+        return (losses * weights).mean()
 
 
-def evaluate(data_loader, calculate_accuracy=False):
+model = GNN(
+    num_class=6,
+    num_layer=2,
+    emb_dim=128,
+    input_dim=input_dim,
+    residual=False,
+    drop_ratio=0.2,
+    JK='last',
+    graph_pooling='mean'
+)
+
+
+def train_model(train_loader, model, optimizer, criterion, device, folder_name):
+    logs_folder = os.path.join("logs")
+    os.makedirs(logs_folder, exist_ok=True)
+    log_file = os.path.join(logs_folder, f"training_{folder_name}.log")
+    logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s - %(message)s')
+    logging.getLogger().addHandler(logging.StreamHandler())
+
+    best_val_acc = 0
+    for epoch in range(1, 51):  # 50 epoche
+        model.train()
+        total_loss, correct, total = 0, 0, 0
+        for data in train_loader:
+            data = data.to(device)
+            optimizer.zero_grad()
+            output = model(data)
+            loss = criterion(output, data.y.to(device))
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            pred = output.argmax(dim=1)
+            correct += (pred == data.y.to(device)).sum().item()
+            total += data.y.size(0)
+        acc = correct / total
+        logging.info(f"Epoch {epoch} | Train Loss: {total_loss/len(train_loader):.4f} | Train Acc: {acc:.4f}")
+
+        if epoch % 10 == 0:
+            logging.info(f"--- Checkpoint at epoch {epoch} ---")
+        if epoch % 10 == 0 or acc > best_val_acc:
+            checkpoint_path = f"checkpoints/model_{folder_name}_epoch_{epoch}.pth"
+            torch.save(model.state_dict(), checkpoint_path)
+            logging.info(f"Checkpoint saved: {checkpoint_path}")
+            best_val_acc = acc
+
+def predict(test_loader, model, device, folder_name):
     model.eval()
-    correct = 0
-    total = 0
     predictions = []
     with torch.no_grad():
-        for data in data_loader:
+        for data in test_loader:
             data = data.to(device)
             output = model(data)
             pred = output.argmax(dim=1)
             predictions.extend(pred.cpu().numpy())
-            if calculate_accuracy:
-                correct += (pred == data.y).sum().item()
-                total += data.y.size(0)
-    if calculate_accuracy:
-        accuracy = correct / total
-        return accuracy, predictions
-    return predictions
+    os.makedirs("submission", exist_ok=True)
+    df = pd.DataFrame({"id": list(range(len(predictions))), "pred": predictions})
+    df.to_csv(f"submission/testset_{folder_name}.csv", index=False)
+    print(f"Predictions saved: submission/testset_{folder_name}.csv")
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--test_path", type=str, required=True, help="Path to test.json.gz")
+    parser.add_argument("--train_path", type=str, help="Path to train.json.gz")
+    args = parser.parse_args()
 
-def main(args):
-    global model, optimizer, criterion, device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    folder_name = get_folder_name(args.test_path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Parameters for the GCN model
-    input_dim = 300  # Example input feature dimension (you can adjust this)
-    hidden_dim = 64
-    output_dim = 6  # Number of classes
+    # Carica dati
+    test_dataset = GraphDataset(args.test_path)
+    transformed_test = []
+    for data in test_dataset:
+        #data = normalize_edge_attr(data)
+        data = add_node_degree_feature(data)
+        data = add_clustering_coefficient(data)
+        transformed_test.append(data)
+    test_loader = DataLoader(transformed_test, batch_size=32, shuffle=False)
 
-    # Initialize the model, optimizer, and loss criterion
-    model = SimpleGCN(input_dim, hidden_dim, output_dim).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    criterion = torch.nn.CrossEntropyLoss()
+    # Modello
+    input_dim = transformed_test[0].x.shape[1]
+    model = GNN(num_class=6, input_dim=input_dim).to(device)
 
-    # Prepare test dataset and loader
-    test_dataset = GraphDataset(args.test_path, transform=add_zeros)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-
-    # Train dataset and loader (if train_path is provided)
     if args.train_path:
-        train_dataset = GraphDataset(args.train_path, transform=add_zeros)
-        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+        train_dataset = GraphDataset(args.train_path)
+        transformed_train = []
+        for data in train_dataset:
+            #data = normalize_edge_attr(data)
+            data = add_node_degree_feature(data)
+            data = add_clustering_coefficient(data)
+            transformed_train.append(data)
+        train_loader = DataLoader(transformed_train, batch_size=32, shuffle=True)
 
-        # Training loop
-        num_epochs = 2
-        for epoch in range(num_epochs):
-            train_loss = train(train_loader)
-            train_acc, _ = evaluate(train_loader, calculate_accuracy=True)
-            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+        criterion = torch.nn.CrossEntropyLoss()
+        train_model(train_loader, model, optimizer, criterion, device, folder_name)
+    else:
+        checkpoint_path = f"checkpoints/model_{folder_name}_best.pth"  # Specifica il checkpoint finale corretto
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+        print(f"Loaded model from {checkpoint_path}")
 
-    # Evaluate and save test predictions
-    predictions = evaluate(test_loader, calculate_accuracy=False)
-    test_graph_ids = list(range(len(predictions)))  # Generate IDs for graphs
-
-    # Save predictions to CSV
-    test_dir_name = os.path.dirname(args.test_path).split(os.sep)[-1]
-    output_csv_path = os.path.join(f"testset_{test_dir_name}.csv")
-    output_df = pd.DataFrame({
-        "GraphID": test_graph_ids,
-        "Class": predictions
-    })
-    output_df.to_csv(output_csv_path, index=False)
-    print(f"Test predictions saved to {output_csv_path}")
-
+    predict(test_loader, model, device, folder_name)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train and evaluate a GCN model on graph datasets.")
-    parser.add_argument("--train_path", type=str, default=None, help="Path to the training dataset (optional).")
-    parser.add_argument("--test_path", type=str, required=True, help="Path to the test dataset.")
-    args = parser.parse_args()
-    main(args)
+    main()
